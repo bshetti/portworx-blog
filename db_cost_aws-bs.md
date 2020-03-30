@@ -41,7 +41,13 @@ A quick review of the main components used in this blog:
 
 1.  **Cloudhealth:** Used to calculate the costs of each configguration. Its a SaaS service from VMware that provides an ability to easily manage cost, ensure security compliance, improve governance and automate actions across multi-cloud environments. Known for offering the highest levels of data integrity throughout an organization’s entire cloud journey, CloudHealth is the platform of choice for leading enterprises and service providers.
 
-2.  **Portworx** XXXXXXXX Portworx was configured with redundant volumes supporting the K8S cluster. These volumes, configured at 200G, support the Postgres deployment.
+2.  **Portworx** - The Portworx Enterprise Storage Platform is your end-to-end storage and data management solution for all your Kubernetes projects. Portworx provides a slew of [features](https://portworx.com/products/features/) that include high availability, disaster recovery, backup and restore, security, automated capacity management, multi-cluster management and migration of application and data that those applications are using. The benefit of Portworx on AWS is the abstraction of underlying EBS such that every volume an application uses is optimized for cost and abstracted to provide the best experience without sacrificing performance or flexibility. In fact, in most cases, Kubernetes used will have an [improved operations](https://portworx.com/ebs-stuck-attaching-state-docker-containers/) and [better economies of scale](https://portworx.com/architects-corner-aurea-beyond-limits-amazon-ebs-run-200-kubernetes-stateful-pods-per-host/). 
+
+![](px-arch.png)
+
+In this setup, each Portworx node in the EKS cluster was configured with a single EBS volumes using [automated volume templates](https://docs.portworx.com/cloud-references/auto-disk-provisioning/aws/#1-using-a-template-specification). Portworx then pools these together to allow applications on the K8S cluster to create virtual thin-provisioned, highly available Persistent Volumes (PVs) which support the Postgres deployment.
+
+> Note that portworx backing drives were configured with the same capacity and performance (gp2) as the RDS instance such that the two configurations were using the same type of EBS from a cost perspective to support Postgres.
 
 3. **AWS EKS** - Elastic Kubernetes Service - Two exactly similar clusters were configured with the following config using EKS CTL
 
