@@ -26,7 +26,7 @@ Today I will cover what the cost differential between rolling your own on K8S vs
 
 In order to show case the differences, I will use the [Acme Fitness Shop App](https://github.com/vmwarecloudadvocacy/acme_fitness_demo) deployed in two Kubernetes configurations:
 
-* Deploy the e-commerce application with Portworx on the Kubernetes cluster. Portworx will support volumes in AWS EC2 which will give persistence storage, and other capabilities like DR, security, etc.
+* Deploy the e-commerce application with Portworx on the Kubernetes cluster. Portworx will support volumes in AWS EC2 which will give persistence storage, and other capabilities like DR, [backup](https://portworx.com/kubernetes-backup/), security, etc.
 * Deploy the e-commerce application with RDS. This is generally the logical choice since its easy to bring up and manage on AWS.
 
 I'll also use **Postgres** on both with similar configurations to properly compare them. 
