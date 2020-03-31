@@ -22,7 +22,7 @@ As more and more applications convert to cloud native with Kubernetes as a nor
  
 I covered the complexity of the second question in a previous article. [Application state what is easier?](https://www.cloudjourney.io/articles/devops/application-state-whats-easier-bs/)
 
-Today I will cover what it cost differential between rolling your own on K8S vs using a service like RDS from AWS. 
+Today I will cover what the cost differential between rolling your own on K8S vs using a service like RDS from AWS. 
 
 In order to show case the differences, I will use the [Acme Fitness Shop App](https://github.com/vmwarecloudadvocacy/acme_fitness_demo) deployed in two Kubernetes configurations:
 
@@ -49,14 +49,13 @@ A quick review of the main components used in this blog:
 In this setup, each Portworx node in the EKS cluster was configured with a single EBS volumes using [automated volume templates](https://docs.portworx.com/cloud-references/auto-disk-provisioning/aws/#1-using-a-template-specification). Portworx then pools these together to allow applications on the K8S cluster to create virtual thin-provisioned, highly available Persistent Volumes (PVs) which support the Postgres deployment.
 
 
-
 3. **AWS EKS** - Elastic Kubernetes Service - Two exactly similar clusters were configured with the following config using EKS CTL
 
 ```
 eksctl create cluster --name acme-portworx --region us-east-1 --node-type t3.large --nodes 3
 ```
 
-4. **postgres-operator** - There are several Postgres Operators available. I used the [zalando/postgres-operator](https://github.com/zalando/postgres-operator). This enabled deployment of postgres on to the Portworx volumes.
+4. **postgres-operator** - There are several Postgres Operators available. I used the [zalando/postgres-operator](https://github.com/zalando/postgres-operator). This enabled deployment of Postgres on to the Portworx volumes. Postgres was configured to have a single writer and two read replicas (Just like RDS) across 3 availability zones (one on each EKS node in AZ a,b,c)
 
 5. **AWS RDS** - was configured for Postgres with a MultiAz configuration with 200G capacity. (same as Portworx)
 
@@ -99,7 +98,7 @@ The cost of running  RDS  is roughly ~2.5x the cost of running an EKS cluster.
 
 Because EKS clusters are a combination of multiple components, the EKS cluster in this configuration is made up of EC2 isntances and  EBS storage (volumes).  
 
-Portworx adds volumes to help support the installation of a database, hence the cost of EBS storage is $3.58/day. This consists of 9 volumes, 6 of which are configured by Portworx, and 3 are baseline EKS cluster volumes.
+Portworx adds volumes to help support the installation of a database, hence the cost of EBS storage is $3.58/day. This consists of 9 volumes, 6 of which are configured by Portworx, and 3 are root volumes for EKS cluster nodes.
 
 Let's review the breakdown of the volume costs.
 
@@ -109,7 +108,7 @@ If we just take the baseline EC2 (EKS Cluster) volumes ($.06/day), then the tota
 
 ### Portworx + Postgres or RDS?
 
-Based on the cost comparison above, its obvious that Portworx+Postgres is the better option at 50% cheaper to operate than RDS. However, in any operations organization there are many parameters that help make the decision to use a managed service vs self built. Cost is an important aspect, but parameters like K8S expertise or even DB expertise are important considerations. If we assume K8S expertise and DB exoertise is in house then Portworx+Postgres is the best option to help reduce the operational cost of the solution. 
+Based on the cost comparison above, its obvious that Portworx+Postgres is the better option at 50% cheaper to operate than RDS. However, in any operations organization there are many parameters that help make the decision to use a managed service vs self built. Cost is an important aspect, but parameters like K8S expertise or even DB expertise are important considerations. If we assume K8S expertise and DB expertise is in house then Portworx+Postgres is the best option to help reduce the operational cost of the solution. 
 
 ## Detailed configurations
 
@@ -211,13 +210,13 @@ users-redis             ClusterIP      10.100.3.12      <none>                  
 Portworx is set up with a spec that is generated through a UI located at [PX-Central](https://central.portworx.com/dashboard). 
 
 The configuration is set up with the following parameters:
-1. PWX Hosted etcd - this allows portworx to run a highly available version of etcd for the cluster increasing the availability of the cluster
+1. PWX Internally Hosted etcd - this allows Portworx to run a highly available version of etcd for the cluster increasing the availability of the cluster
 2. AWS is selected as the cloud
 3. GP2 based EBS volume types selected with 200GB capacity
 
-This will bring up 2 clusters of 3 Volumes each supporting the following:
-1. 3 redundant volumes in a cluster to support Postgres @ 200GB per volume
-2. 3 redundant volumes in a cluster to support etcd for the cluster @ 150GB per volume
+This will bring up a single Portworx cluster EBS in the following ways:
+1. 3 redundant volumes (1 per EKS node) which Portworx pools together into a single virtual storage pool. Postgres uses this pool to create [PVs](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) for persistence.
+2. 3 redundant volumes in the cluster to support a 3 node etcd cluster @ 150GB per volume for Portworx metadata.
 
 The following is should pop up in the kube-system K8S namespace:
 
@@ -236,9 +235,14 @@ kube-system   px-lighthouse-6d48b4df85-wr72s            3/3     Running   0     
 
 #### Postgres setup
 
-We used the following [postgres operator](https://github.com/zalando/postgres-operator) from a company called Zalando
+We used the following [postgres operator](https://github.com/zalando/postgres-operator) from a company called Zalando. To understand the components, take a look at [the docs](https://postgres-operator.readthedocs.io/en/latest/#overview-of-involved-entities).
 
 The setup is simple from the installation instructions, but what it actually brings up is the following:
+
+- Postgres [Operator](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) (Operator and API to setup Postgres)
+- Postgres Operator UI (Optional: a UI for Postgres Clusters in K8s)
+- 1 Master (Writer) pwx-pg-cluster-0
+- 2 Replicas (Reader) pwx-pg-cluster-1, pwx-pg-cluster-2
 
 ```
 PODS:
@@ -258,14 +262,17 @@ The `pwx-pg-cluster-x` is the postgres implementation using the volumes brought 
 
 Connecting to the Postgres DB is as simple as pointing the app's `ORDER_DB_HOST` to `pwx-pg-cluster`. See section above
 
+Portworx can retain internal snapshots using a snapshot [schedule policy](https://docs.portworx.com/portworx-install-with-kubernetes/storage-operations/create-snapshots/scheduled/#creating-a-schedule-policy). This does not add to the cost as these snapshots are using the same storage pool.
+
 ### RDS configuration
 
 In keeping normalized with the portworx+postgres configuration, AWS RDS was configured with the following parameters:
 
-* Multi-AZ was turned on - similar to the psotgres cluster in the portworx+postgres config
+* [Multi-AZ](https://aws.amazon.com/rds/features/multi-az/) was turned on - similar to the postgres cluster in the portworx+postgres config. This RDS configuration has 1 master and 2 [read replicas](https://aws.amazon.com/rds/features/read-replicas/) as well.
 * EC2 instance type used was db.t3.large, similar to what is used in the K8S cluster
 * Storage is 200GB as with the portworx-postgres configuration
 * Snapshots are configured to be deleted after 1 day
+* No backups or backup storage
 
 Configuring RDS in the app is as simple as pointing the `ORDER_DB_HOST` to `acme-postgres.XXXXX.us-east-1.rds.amazonaws.com`
 
@@ -282,13 +289,14 @@ Portworx Perspective consists of the following assets/resources in AWS
 2. 9 EBS volumes 
 * 3 EBS Volumes (non-encrypted) with 20GBs each attached to a corresponding EC2 instance. Each volume is gp2 with 100 IOPS plus
 * 3 redundant volumes in a cluster to support etcd for the cluster @ 150GB per volume
-* 3 EBS volumes connected to the 3 EKS EC2 connected volumes at 20GB each
+* 3 EBS volumes connected to the 3 EKS EC2 connected volumes at 200GB each for Portworx Storage Pool
 3. 2 ELBs One for the application and one for postgres 
 
 RDS Perspective consists of the following assets/resources in AWS
 
-* 4 EC2 instances - 3 t3.large instances for the EKS cluster and one for RDS instance
+* 6 EC2 instances - 3 t3.large instances for the EKS cluster and 3 for Multi-Zone RDS instance
 * 3 EBS volumes connected to the 3 EKS EC2 connected volumes at 20GB each
+* 3 EBS volumes too support Postgres RDS nodes @ 200GB each
 * 1 ELB supporting the application front end
 
 
